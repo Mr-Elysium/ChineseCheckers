@@ -164,11 +164,15 @@ class Trainer:
         
         # Start GPU inference server with current model weights
         verbose = self.config.get('verbose', False)
+        inference_batch_size = self.config.get('inference_batch_size', 128)
+        batch_delay = self.config.get('batch_delay', 0.005)
+        
         gpu_process = mp.Process(
             target=gpu_inference_server,
             args=(task_queue, [p[1] for p in pipes], temp_model.name, 
-                  self.config['num_players'], 16, 
-                  self.config['num_res_blocks'], self.config['num_channels'], verbose)
+                  self.config['num_players'], inference_batch_size, 
+                  self.config['num_res_blocks'], self.config['num_channels'], 
+                  verbose, batch_delay)
         )
         gpu_process.start()
         

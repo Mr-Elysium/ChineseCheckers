@@ -45,8 +45,14 @@ def select_move_with_temperature(mcts, temperature=1.0):
         return mcts.get_best_move()
 
 # --- 1. The Inference Server (The Brain on the 3080) ---
-def gpu_inference_server(task_queue, pipes, model_path, num_players, batch_size=192, num_res_blocks=10, num_channels=128, verbose=False):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def gpu_inference_server(task_queue, pipes, model_path, num_players, batch_size=192, num_res_blocks=10, num_channels=128, verbose=False, batch_delay=0.005):
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
     model = ChineseCheckersNet(
         num_players=num_players,
         num_res_blocks=num_res_blocks,
@@ -58,22 +64,22 @@ def gpu_inference_server(task_queue, pipes, model_path, num_players, batch_size=
         model.load_state_dict(torch.load(model_path, map_location=device))
     
     model.eval()
-    # Enable torch.compile for RTX 3080 (20-30% speedup)
+    # Enable torch.compile for CUDA (20-30% speedup on RTX 3080/T4)
     if torch.cuda.is_available():
-        # model = torch.compile(model, mode='max-autotune')
-        # model = torch.compile(model)
+        model = torch.compile(model)
         if verbose:
-            print("GPU Server: Initialized with torch.compile optimization")
+            print(f"GPU Server: Initialized with torch.compile optimization (batch_size={batch_size}, delay={batch_delay*1000:.1f}ms)")
     elif verbose:
-        print("GPU Server: Initialized and waiting for tasks...")
+        device_name = "MPS (Apple Silicon)" if device.type == "mps" else "CPU"
+        print(f"GPU Server: Initialized on {device_name} (batch_size={batch_size}, delay={batch_delay*1000:.1f}ms)")
 
     while True:
         batch_ids = []
         batch_tensors = []
         
         start_time = time.time()
-        # Collect tasks until batch is full or 15ms passed (optimized for 18+ workers)
-        while len(batch_tensors) < batch_size and (time.time() - start_time < 0.010):
+        # Collect tasks until batch is full or batch_delay passed
+        while len(batch_tensors) < batch_size and (time.time() - start_time < batch_delay):
             try:
                 worker_id, state_array, current_player = task_queue.get(timeout=0.001)
                 batch_ids.append(worker_id)

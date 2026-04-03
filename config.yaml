@@ -1,0 +1,57 @@
+# Chinese Checkers AlphaZero Training Configuration
+# Optimized for AWS g4dn.xlarge (Tesla T4 GPU, 4 vCPUs, 16GB RAM)
+
+# Model Architecture
+model:
+  num_players: 2
+  num_res_blocks: 10
+  num_channels: 128
+
+# Training Hyperparameters
+training:
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  batch_size: 1024              # Training batch size (GPU memory permitting)
+  training_steps: 200            # Gradient updates per iteration
+
+# Self-Play Settings
+self_play:
+  games_per_iteration: 200       # More games = better data quality
+  num_workers: 8                # Parallel game workers (CPU intensive)
+  mcts_iterations: 200           # MCTS simulations per move
+  inference_batch_size: 128      # GPU inference batch size (T4 optimized)
+  batch_delay: 0.005             # 5ms batch collection delay
+
+# Performance Settings
+performance:
+  num_threads: 4                 # PyTorch threads (match vCPU count on g4dn.xlarge)
+
+# Replay Buffer
+replay_buffer:
+  buffer_size: 200000            # Large buffer for diverse training data
+
+# Evaluation
+evaluation:
+  eval_games: 80                 # Games to evaluate model quality
+  eval_frequency: 10             # Evaluate every N iterations
+  win_rate_threshold: 0.55       # Win rate needed to replace best model
+
+# Training Loop
+training_loop:
+  num_iterations: 500            # Total training iterations
+
+# Directories
+directories:
+  checkpoint_dir: checkpoints
+  log_dir: logs
+
+# Experiment Tracking
+wandb:
+  enabled: true
+  project: chinese-checkers-alphazero
+  run_name: null                 # Auto-generated if not specified
+
+# UI/UX
+ui:
+  verbose: false
+  progress_bar: true
