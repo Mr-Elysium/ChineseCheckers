@@ -12,6 +12,7 @@ from trainer import Trainer
 import torch
 
 torch.set_num_threads(24)
+torch.set_float32_matmul_precision('high')
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train Chinese Checkers AlphaZero')
