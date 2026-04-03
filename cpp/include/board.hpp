@@ -17,6 +17,7 @@ public:
     const BoardArray& get_grid() const { return grid; }
     int get_current_player() const { return current_player; }
     int get_num_players() const { return num_players; }
+    const int8_t* get_grid_ptr() const { return grid.data(); }
 
     // Win Logic
     bool is_terminal() const;
