@@ -167,7 +167,7 @@ class Trainer:
         gpu_process = mp.Process(
             target=gpu_inference_server,
             args=(task_queue, [p[1] for p in pipes], temp_model.name, 
-                  self.config['num_players'], 192, 
+                  self.config['num_players'], 64, 
                   self.config['num_res_blocks'], self.config['num_channels'], verbose)
         )
         gpu_process.start()
