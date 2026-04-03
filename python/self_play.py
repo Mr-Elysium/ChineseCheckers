@@ -96,13 +96,14 @@ def gpu_inference_server(task_queue, pipes, model_path, num_players, batch_size=
             pipes[worker_id].send((probs[i].tolist(), values[i].tolist()))
 
 # --- 2. The Actor ---
-def actor_worker(worker_id, task_queue, pipe, game_output_queue, num_iters, verbose=False):
+def actor_worker(worker_id, task_queue, pipe, game_output_queue, num_iters, num_games, verbose=False):
     cc_core.MoveGen.initialize()
     
     # Standard limit for 2-player Chinese Checkers
     MAX_MOVES = 400 
+    games_played = 0
 
-    while True:
+    while games_played < num_games:
         board = cc_core.Board(2)
         mcts = cc_core.MCTS(1.41)
         trajectory = []
@@ -150,9 +151,10 @@ def actor_worker(worker_id, task_queue, pipe, game_output_queue, num_iters, verb
             step["rewards"] = rewards
         
         game_output_queue.put(trajectory)
+        games_played += 1
         if verbose:
             status = "TERMINAL" if board.is_terminal() else "MAX_MOVES"
-            print(f"Actor {worker_id}: Game finished ({status}). Saving...")
+            print(f"Actor {worker_id}: Game {games_played}/{num_games} finished ({status}). Saving...")
 
 # --- 3. Test Block ---
 if __name__ == "__main__":

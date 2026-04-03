@@ -8,6 +8,7 @@ import numpy as np
 import multiprocessing as mp
 from queue import Empty
 from datetime import datetime
+from tqdm import tqdm
 
 from network import ChineseCheckersNet
 from replay_buffer import ReplayBuffer
@@ -15,10 +16,21 @@ from evaluator import Evaluator
 from self_play import gpu_inference_server, actor_worker
 from utils import hex_to_tensor
 
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
 class Trainer:
     def __init__(self, config):
         self.config = config
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        elif torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
         
         # Initialize network
         self.model = ChineseCheckersNet(
@@ -42,7 +54,8 @@ class Trainer:
             num_games=config['eval_games'],
             mcts_iterations=config['mcts_iterations'],
             device=self.device,
-            verbose=config.get('verbose', False)
+            verbose=config.get('verbose', False),
+            use_progress_bar=config.get('use_progress_bar', True)
         )
         
         # Training state
@@ -52,6 +65,20 @@ class Trainer:
         # Create directories
         os.makedirs(config['checkpoint_dir'], exist_ok=True)
         os.makedirs(config['log_dir'], exist_ok=True)
+        
+        # Initialize wandb if enabled
+        if config.get('use_wandb', False):
+            if not WANDB_AVAILABLE:
+                print("Warning: wandb not available, disabling experiment tracking")
+                self.config['use_wandb'] = False
+            else:
+                run_name = config.get('wandb_run_name') or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                wandb.init(
+                    project=config.get('wandb_project', 'chinese-checkers-alphazero'),
+                    name=run_name,
+                    config=config
+                )
+                print(f"✓ Weights & Biases tracking enabled: {wandb.run.url}")
     
     def train(self):
         print("=" * 60)
@@ -81,6 +108,15 @@ class Trainer:
             print(f"  Collected {len(trajectories)} games in {elapsed:.1f}s")
             print(f"  Replay buffer size: {len(self.replay_buffer)}")
             
+            # Log to wandb
+            if self.config.get('use_wandb', False) and WANDB_AVAILABLE:
+                wandb.log({
+                    'self_play/games_collected': len(trajectories),
+                    'self_play/buffer_size': len(self.replay_buffer),
+                    'self_play/collection_time': elapsed,
+                    'iteration': iteration
+                })
+            
             # Phase 2: Training
             print("\n[2/3] Training network...")
             start_time = time.time()
@@ -106,6 +142,10 @@ class Trainer:
         print("\n" + "=" * 60)
         print("Training Complete!")
         print("=" * 60)
+        
+        # Finish wandb run
+        if self.config.get('use_wandb', False) and WANDB_AVAILABLE:
+            wandb.finish()
     
     def _collect_self_play_data(self):
         num_workers = self.config['num_workers']
@@ -132,12 +172,12 @@ class Trainer:
         )
         gpu_process.start()
         
-        # Start actor workers
+        # Start actor workers - each plays games_per_worker games in parallel
         workers = []
         for i in range(num_workers):
             p = mp.Process(
                 target=actor_worker,
-                args=(i, task_queue, pipes[i][0], game_output_queue, self.config['mcts_iterations'], verbose)
+                args=(i, task_queue, pipes[i][0], game_output_queue, self.config['mcts_iterations'], games_per_worker, verbose)
             )
             p.start()
             workers.append(p)
@@ -147,23 +187,34 @@ class Trainer:
         games_collected = 0
         target_games = self.config['games_per_iteration']
         
+        # Use tqdm if enabled
+        use_pbar = self.config.get('use_progress_bar', True)
+        pbar = tqdm(total=target_games, desc="  Self-play", unit="game") if use_pbar else None
+        
         while games_collected < target_games:
             try:
                 trajectory = game_output_queue.get(timeout=1.0)
                 trajectories.append(trajectory)
                 games_collected += 1
                 
-                if self.config.get('verbose', False) and games_collected % 10 == 0:
+                if pbar:
+                    pbar.update(1)
+                elif self.config.get('verbose', False) and games_collected % 10 == 0:
                     print(f"  Progress: {games_collected}/{target_games} games")
                 elif games_collected % 25 == 0:
                     print(f"  Progress: {games_collected}/{target_games} games")
             except Empty:
                 continue
         
-        # Cleanup
+        if pbar:
+            pbar.close()
+        
+        # Cleanup - workers should finish naturally after playing their games
         for p in workers:
-            p.terminate()
-            p.join()
+            p.join(timeout=5)  # Wait for workers to finish
+            if p.is_alive():
+                p.terminate()  # Force terminate if still running
+                p.join()
         
         gpu_process.terminate()
         gpu_process.join()
@@ -176,8 +227,9 @@ class Trainer:
     def _train_network(self):
         self.model.train()
         
-        # Enable automatic mixed precision for RTX 3080 (30-50% speedup)
-        use_amp = torch.cuda.is_available()
+        # Enable automatic mixed precision for CUDA devices (30-50% speedup on RTX 3080)
+        # Note: AMP not supported on MPS (Apple Silicon) as of PyTorch 2.x
+        use_amp = self.device.type == 'cuda'
         scaler = torch.cuda.amp.GradScaler() if use_amp else None
         
         total_policy_loss = 0.0
@@ -185,7 +237,11 @@ class Trainer:
         total_loss = 0.0
         num_batches = 0
         
-        for _ in range(self.config['training_steps']):
+        # Use tqdm if enabled
+        use_pbar = self.config.get('use_progress_bar', True)
+        steps_iter = tqdm(range(self.config['training_steps']), desc="  Training", unit="step") if use_pbar else range(self.config['training_steps'])
+        
+        for _ in steps_iter:
             # Sample batch
             states, policies, rewards, players = self.replay_buffer.sample_batch(
                 self.config['batch_size']
@@ -202,7 +258,7 @@ class Trainer:
             target_values = torch.from_numpy(rewards).to(self.device)
             
             # Forward pass with automatic mixed precision
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with torch.amp.autocast(device_type='cuda', enabled=use_amp):
                 pred_policies, pred_values = self.model(input_batch)
                 
                 # Compute losses
@@ -247,11 +303,22 @@ class Trainer:
             total_loss += loss.item()
             num_batches += 1
         
-        return {
+        stats = {
             'policy_loss': total_policy_loss / num_batches,
             'value_loss': total_value_loss / num_batches,
             'total_loss': total_loss / num_batches
         }
+        
+        # Log to wandb
+        if self.config.get('use_wandb', False) and WANDB_AVAILABLE:
+            wandb.log({
+                'train/policy_loss': stats['policy_loss'],
+                'train/value_loss': stats['value_loss'],
+                'train/total_loss': stats['total_loss'],
+                'train/iteration': self.iteration
+            })
+        
+        return stats
     
     def _evaluate_and_save(self):
         if self.best_model_path is None:
@@ -272,6 +339,13 @@ class Trainer:
         
         # Evaluate
         win_rate = self.evaluator.evaluate(self.model, best_model)
+        
+        # Log to wandb
+        if self.config.get('use_wandb', False) and WANDB_AVAILABLE:
+            wandb.log({
+                'eval/win_rate': win_rate,
+                'eval/iteration': self.iteration
+            })
         
         # Update best model if win rate > threshold
         if win_rate >= self.config['win_rate_threshold']:

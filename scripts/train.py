@@ -47,6 +47,12 @@ def parse_args():
     # Verbosity
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging (move-by-move details)')
     
+    # Experiment tracking
+    parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases experiment tracking')
+    parser.add_argument('--wandb-project', type=str, default='chinese-checkers-alphazero', help='W&B project name')
+    parser.add_argument('--wandb-run-name', type=str, default=None, help='W&B run name (auto-generated if not set)')
+    parser.add_argument('--no-progress-bar', action='store_true', help='Disable tqdm progress bars')
+    
     return parser.parse_args()
 
 def main():
@@ -71,7 +77,11 @@ def main():
         'num_iterations': args.num_iterations,
         'checkpoint_dir': args.checkpoint_dir,
         'log_dir': args.log_dir,
-        'verbose': args.verbose
+        'verbose': args.verbose,
+        'use_wandb': args.wandb,
+        'wandb_project': args.wandb_project,
+        'wandb_run_name': args.wandb_run_name,
+        'use_progress_bar': not args.no_progress_bar
     }
     
     # Initialize trainer

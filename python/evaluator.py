@@ -2,13 +2,29 @@ import torch
 import numpy as np
 import cc_core
 from utils import hex_to_tensor
+from tqdm import tqdm
 
 class Evaluator:
-    def __init__(self, num_games=20, mcts_iterations=100, device='cuda', verbose=False):
+    def __init__(self, num_games=20, mcts_iterations=100, device='cuda', verbose=False, use_progress_bar=True):
         self.num_games = num_games
         self.mcts_iterations = mcts_iterations
-        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+        
+        # Handle device selection - accept device object or string
+        if isinstance(device, torch.device):
+            self.device = device
+        elif device == 'cuda' and torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        elif device == 'mps' and torch.backends.mps.is_available():
+            self.device = torch.device('mps')
+        elif torch.backends.mps.is_available():
+            self.device = torch.device('mps')
+        elif torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        else:
+            self.device = torch.device('cpu')
+        
         self.verbose = verbose
+        self.use_progress_bar = use_progress_bar
         cc_core.MoveGen.initialize()
     
     def evaluate(self, model_new, model_old):
@@ -19,7 +35,10 @@ class Evaluator:
         wins_old = 0
         draws = 0
         
-        for game_idx in range(self.num_games):
+        # Use tqdm if enabled
+        game_iter = tqdm(range(self.num_games), desc="  Evaluation", unit="game") if self.use_progress_bar else range(self.num_games)
+        
+        for game_idx in game_iter:
             if game_idx % 2 == 0:
                 result = self._play_game(model_new, model_old)
                 if result == 1:
@@ -37,7 +56,7 @@ class Evaluator:
                 else:
                     draws += 1
             
-            if self.verbose and (game_idx + 1) % 5 == 0:
+            if not self.use_progress_bar and self.verbose and (game_idx + 1) % 5 == 0:
                 print(f"  Evaluation: {game_idx + 1}/{self.num_games} games complete")
         
         win_rate = wins_new / self.num_games

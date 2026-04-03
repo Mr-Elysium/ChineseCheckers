@@ -35,3 +35,6 @@ test_checkpoints/
 checkpoints/
 test_logs/
 logs/
+
+# --- Weights & Biases ---
+wandb/
