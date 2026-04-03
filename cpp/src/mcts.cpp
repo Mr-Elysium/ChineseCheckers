@@ -1,29 +1,79 @@
 #include "mcts.hpp"
+#include "move_gen.hpp"
+#include <cmath>
+#include <algorithm>
 
-MCTSNode::MCTSNode(MCTSNode* parent, float prior) 
-    : parent(parent), prior(prior), visit_count(0), virtual_loss(0) {}
+void MCTS::search(int iterations, Board& board, Predictor predictor) {
+    // 1. Initialize root if it doesn't exist
+    if (!root) {
+        auto grid = board.get_grid();
+        auto [policy, value] = predictor(std::vector<int>(grid.begin(), grid.end()));
+        root = std::make_unique<MCTSNode>(Move(-1, -1), 1.0f);
+        expand_node(root.get(), board, policy);
+    }
 
-float MCTSNode::get_value(int player_index) const {
-    if (visit_count == 0) return 0;
-    return value_sum[player_index] / visit_count;
+    for (int i = 0; i < iterations; ++i) {
+        MCTSNode* curr = root.get();
+        Board temp_board = board;
+        std::vector<MCTSNode*> path = {curr};
+
+        // PHASE 1: SELECTION
+        // Move down the tree using PUCT until we hit a leaf
+        while (!curr->children.empty()) {
+            curr = select_child(curr);
+            temp_board.apply_move(curr->move);
+            path.push_back(curr);
+        }
+
+        // PHASE 2 & 3: EXPANSION & EVALUATION
+        float leaf_value = 0.0f;
+        if (temp_board.is_terminal()) {
+            // Use the root player's perspective for terminal rewards
+            leaf_value = temp_board.get_rewards()[board.get_current_player() - 1];
+        } else {
+            auto grid = temp_board.get_grid();
+            auto [policy, value] = predictor(std::vector<int>(grid.begin(), grid.end()));
+            
+            expand_node(curr, temp_board, policy);
+            // CRITICAL FIX: Evaluate from the perspective of the player at the leaf position
+            // The NN returns value from current player's perspective at temp_board
+            // We need to convert this to root player's perspective
+            int leaf_player = temp_board.get_current_player();
+            int root_player = board.get_current_player();
+            
+            if (leaf_player == root_player) {
+                // Same player, use value directly
+                leaf_value = value[root_player - 1];
+            } else {
+                // Different player in 2-player game, negate the value
+                // In 2-player zero-sum: opponent's win = our loss
+                leaf_value = -value[leaf_player - 1];
+            }
+        }
+
+        // PHASE 4: BACKPROPAGATION
+        for (auto node : path) {
+            node->visit_count++;
+            node->value_sum += leaf_value;
+        }
+    }
 }
 
-MCTS::MCTS(float c_puct) : c_puct(c_puct) {}
-
-MCTSNode* MCTS::select(MCTSNode* node, const Board& board) {
-    int p_idx = board.get_current_player() - 1; // 0-indexed for vector
-    
+MCTSNode* MCTS::select_child(MCTSNode* node) {
     MCTSNode* best_child = nullptr;
-    float best_score = -1e9;
+    float best_score = -1e9f;
+    
+    int total_visits = 0;
+    for (auto const& [idx, child] : node->children) {
+        total_visits += child->visit_count;
+    }
 
-    for (auto& [move_to, child] : node->children) {
-        std::lock_guard<std::mutex> lock(child->node_mutex);
-        
+    for (auto const& [idx, child] : node->children) {
         // PUCT Formula: Q + U
-        // We subtract virtual loss from Q to encourage threads to explore elsewhere
-        float Q = child->get_value(p_idx) - (child->virtual_loss * 0.1f);
-        float U = c_puct * child->prior * std::sqrt(node->visit_count) / (1 + child->visit_count);
-        float score = Q + U;
+        // U = C_puct * P(s,a) * sqrt(Sum_N) / (1 + n)
+        float q = child->get_value();
+        float u = cpuct * child->prior * std::sqrt((float)total_visits) / (1.0f + child->visit_count);
+        float score = q + u;
 
         if (score > best_score) {
             best_score = score;
@@ -33,79 +83,71 @@ MCTSNode* MCTS::select(MCTSNode* node, const Board& board) {
     return best_child;
 }
 
-void MCTS::expand(MCTSNode* node, const Board& board, const std::vector<float>& policy_logits) {
-    auto moves = MoveGen::get_legal_moves(board);
-    for (const auto& m : moves) {
-        // policy_logits is 121 long; we use the destination 'to' as the index
-        node->children[m.to] = std::make_unique<MCTSNode>(node, policy_logits[m.to]);
+void MCTS::expand_node(MCTSNode* node, Board& board, const std::vector<float>& policy) {
+    auto legal_moves = MoveGen::get_legal_moves(board);
+    for (auto const& m : legal_moves) {
+        // We use the target index 'to_idx' as the policy index
+        float prior = (m.to_idx >= 0 && m.to_idx < (int)policy.size()) ? policy[m.to_idx] : 0.0f;
+        node->children[m.to_idx] = std::make_unique<MCTSNode>(m, prior);
     }
-    node->value_sum.resize(board.get_num_players(), 0.0f);
 }
 
-void MCTS::backpropagate(MCTSNode* node, const RewardVector& values) {
-    MCTSNode* curr = node;
-    while (curr != nullptr) {
-        std::lock_guard<std::mutex> lock(curr->node_mutex);
-        curr->visit_count++;
-        for (size_t i = 0; i < values.size(); ++i) {
-            curr->value_sum[i] += values[i];
+Move MCTS::get_best_move() {
+    if (!root || root->children.empty()) return Move(-1, -1);
+
+    MCTSNode* best_child = nullptr;
+    int max_visits = -1;
+
+    for (auto const& [idx, child] : root->children) {
+        if (child->visit_count > max_visits) {
+            max_visits = child->visit_count;
+            best_child = child.get();
         }
-        curr = curr->parent;
     }
-}
-
-void MCTS::apply_virtual_loss(MCTSNode* node) {
-    MCTSNode* curr = node;
-    while (curr != nullptr) {
-        std::lock_guard<std::mutex> lock(curr->node_mutex);
-        curr->virtual_loss++;
-        curr = curr->parent;
-    }
-}
-
-void MCTS::remove_virtual_loss(MCTSNode* node) {
-    MCTSNode* curr = node;
-    while (curr != nullptr) {
-        std::lock_guard<std::mutex> lock(curr->node_mutex);
-        curr->virtual_loss--;
-        curr = curr->parent;
-    }
-}
-
-// The core loop that calls your Python predictor
-void MCTS::search(int iterations, Board& root_board, 
-                  const std::function<std::pair<std::vector<float>, RewardVector>(const BoardArray&)>& predictor) {
     
-    // 1. Initial expansion of root
-    auto root = std::make_unique<MCTSNode>(nullptr, 1.0f);
-    auto [init_policy, init_value] = predictor(root_board.get_grid());
-    expand(root.get(), root_board, init_policy);
+    Move m = best_child->move;
+    // Reset the root for the next move to prevent memory explosion
+    root.reset(); 
+    return m;
+}
 
-    // 2. Multi-threaded simulation loop (Simplified for structure)
-    for (int i = 0; i < iterations; ++i) {
-        Board temp_board = root_board;
-        MCTSNode* curr = root.get();
+Move MCTS::get_best_move_and_reuse() {
+    if (!root || root->children.empty()) return Move(-1, -1);
 
-        // Selection
-        while (curr->is_expanded()) {
-            MCTSNode* next = select(curr, temp_board);
-            if (!next) break;
-            
-            // We need to find the Move that leads to 'next'
-            // In our map, the key is m.to
-            // apply_move({unknown_from, next_key}) -> This needs a small fix in your Board logic!
-            curr = next;
-        }
+    MCTSNode* best_child = nullptr;
+    int max_visits = -1;
+    int best_idx = -1;
 
-        // Expansion & Evaluation (Call the 3080)
-        if (!temp_board.is_terminal()) {
-            apply_virtual_loss(curr);
-            auto [policy, value] = predictor(temp_board.get_grid());
-            expand(curr, temp_board, policy);
-            remove_virtual_loss(curr);
-            backpropagate(curr, value);
-        } else {
-            backpropagate(curr, temp_board.get_rewards());
+    for (auto const& [idx, child] : root->children) {
+        if (child->visit_count > max_visits) {
+            max_visits = child->visit_count;
+            best_child = child.get();
+            best_idx = idx;
         }
     }
+    
+    Move m = best_child->move;
+    
+    // Reuse the subtree: move the best child to become the new root
+    if (best_idx != -1 && root->children.find(best_idx) != root->children.end()) {
+        root = std::move(root->children[best_idx]);
+    } else {
+        root.reset();
+    }
+    
+    return m;
+}
+
+void MCTS::clear_tree() {
+    root.reset();
+}
+
+std::map<int, int> MCTS::get_visit_counts() {
+    std::map<int, int> counts;
+    if (root) {
+        for (auto const& [idx, child] : root->children) {
+            counts[idx] = child->visit_count;
+        }
+    }
+    return counts;
 }

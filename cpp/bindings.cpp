@@ -15,10 +15,10 @@ PYBIND11_MODULE(cc_core, m) {
     // 1. Bind the Move struct
     py::class_<Move>(m, "Move")
         .def(py::init<int, int>())
-        .def_readwrite("from_idx", &Move::from)
-        .def_readwrite("to_idx", &Move::to)
+        .def_readwrite("from_idx", &Move::from_idx)
+        .def_readwrite("to_idx", &Move::to_idx)
         .def("__repr__", [](const Move &a) {
-            return "<Move from " + std::to_string(a.from) + " to " + std::to_string(a.to) + ">";
+            return "<Move from " + std::to_string(a.from_idx) + " to " + std::to_string(a.to_idx) + ">";
         });
 
     // 2. Bind the Board class (Optimized get_grid)
@@ -26,7 +26,7 @@ PYBIND11_MODULE(cc_core, m) {
         .def(py::init<int>(), py::arg("num_players") = 2)
         .def("apply_move", &Board::apply_move)
         .def("get_grid", [](const Board &b) {
-            // Shape: 121 elements
+            // Shape: 121 elements (sequential star positions)
             // Strides: 1 byte per element (int8_t)
             // Pointer: direct to the C++ internal array
             // Base: we cast the Board object 'b' so Python knows it owns the memory
@@ -50,5 +50,8 @@ PYBIND11_MODULE(cc_core, m) {
     py::class_<MCTS>(m, "MCTS")
         .def(py::init<float>(), py::arg("c_puct") = 1.41f)
         .def("search", &MCTS::search)
-        .def("get_best_move", &MCTS::get_best_move);
+        .def("get_best_move", &MCTS::get_best_move)
+        .def("get_best_move_and_reuse", &MCTS::get_best_move_and_reuse)
+        .def("get_visit_counts", &MCTS::get_visit_counts)
+        .def("clear_tree", &MCTS::clear_tree);
 }

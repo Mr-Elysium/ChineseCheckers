@@ -1,25 +1,70 @@
 #include "move_gen.hpp"
 #include <algorithm>
+#include <cmath>
 
 // Initialize static members
 int MoveGen::neighbors[121][6];
 bool MoveGen::initialized = false;
 
+// Build the list of 121 valid star positions in 17x17 grid
+static void build_star_positions(std::vector<std::pair<int, int>>& positions) {
+    positions.clear();
+    for (int r = 0; r < 17; ++r) {
+        for (int c = 0; c < 17; ++c) {
+            // Check if (r, c) is a valid star position
+            int q = c - 8;
+            int r_ax = r - 8;
+            int s = -(q + r_ax);
+            
+            int check = 0;
+            if (std::abs(q) <= 4) check++;
+            if (std::abs(r_ax) <= 4) check++;
+            if (std::abs(s) <= 4) check++;
+            
+            if (check >= 2) {
+                positions.push_back({r, c});
+            }
+        }
+    }
+}
+
+// Get star positions (lazy initialization)
+static const std::vector<std::pair<int, int>>& get_star_positions() {
+    static std::vector<std::pair<int, int>> positions;
+    static bool built = false;
+    if (!built) {
+        build_star_positions(positions);
+        built = true;
+    }
+    return positions;
+}
+
 void MoveGen::initialize() {
     if (initialized) return;
 
-    // This logic builds the adjacency list for the 121-node star.
-    // For this implementation, we assume index_to_axial and axial_to_index
-    // are correctly mapped to your 121-node layout.
+    const auto& star_positions = get_star_positions();
+    
+    // Build adjacency list for 121 positions
     for (int i = 0; i < 121; ++i) {
-        AxialCoord coord = index_to_axial(i);
+        int r = star_positions[i].first;
+        int c = star_positions[i].second;
         
-        // Hexagonal neighbor offsets in Axial space
-        int dq[6] = {1, 1, 0, -1, -1, 0};
-        int dr[6] = {0, -1, -1, 0, 1, 1};
+        // Hexagonal neighbor offsets (6 directions)
+        int dr[6] = {-1, -1, 0, 1, 1, 0};
+        int dc[6] = {0, 1, 1, 0, -1, -1};
 
         for (int d = 0; d < 6; ++d) {
-            neighbors[i][d] = axial_to_index(coord.q + dq[d], coord.r + dr[d]);
+            int nr = r + dr[d];
+            int nc = c + dc[d];
+            
+            // Find if (nr, nc) is in our 121 positions
+            neighbors[i][d] = -1;
+            for (int j = 0; j < 121; ++j) {
+                if (star_positions[j].first == nr && star_positions[j].second == nc) {
+                    neighbors[i][d] = j;
+                    break;
+                }
+            }
         }
     }
     initialized = true;
@@ -76,22 +121,22 @@ void MoveGen::find_jumps(int current_pos, const BoardArray& grid,
     }
 }
 
-// A 13x13 grid can contain the whole 121-node star.
-// We map 1D index -> 2D (row, col)
+// Helper functions for coordinate conversion (kept for compatibility)
 MoveGen::AxialCoord MoveGen::index_to_axial(int idx) {
-    // We'll treat the board as a 13x13 skewed grid.
-    // This is a simple row/column mapping.
-    return { idx / 13, idx % 13 };
+    if (idx < 0 || idx >= 121) return {-1, -1};
+    const auto& star_positions = get_star_positions();
+    int r = star_positions[idx].first;
+    int c = star_positions[idx].second;
+    return {r, c};
 }
 
 int MoveGen::axial_to_index(int q, int r) {
-    // Check bounds for the 13x13 bounding box
-    if (q < 0 || q >= 13 || r < 0 || r >= 13) return -1;
-    
-    int idx = q * 13 + r;
-    
-    // IMPORTANT: Not all 169 cells in a 13x13 grid are in the 121-node star.
-    // For now, let's assume a simplified "Diamond" board for testing,
-    // or you can implement the specific "Star" mask here.
-    return idx;
+    const auto& star_positions = get_star_positions();
+    // Find the index of position (q, r) in our 121 positions
+    for (int i = 0; i < 121; ++i) {
+        if (star_positions[i].first == q && star_positions[i].second == r) {
+            return i;
+        }
+    }
+    return -1;
 }

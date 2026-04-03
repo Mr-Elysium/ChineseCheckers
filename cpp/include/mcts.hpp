@@ -1,52 +1,55 @@
 #ifndef MCTS_HPP
 #define MCTS_HPP
 
-#include "types.hpp"
-#include "board.hpp"
-#include "move_gen.hpp"
-#include <memory>
+#include <vector>
 #include <map>
-#include <mutex>
-#include <cmath>
+#include <memory>
+#include <functional>
+#include "board.hpp"
+#include "types.hpp"
 
-class MCTSNode {
-public:
-    MCTSNode(MCTSNode* parent, float prior);
-    
-    // AlphaZero/Max-n statistics
-    int visit_count;
-    int virtual_loss;
+// The Python callback: takes board state (vector<int>), returns (policy_vector, value_vector)
+using Predictor = std::function<std::pair<std::vector<float>, std::vector<float>>(std::vector<int>)>;
+
+struct MCTSNode {
+    Move move;
     float prior;
-    RewardVector value_sum; // Vector of size N
-    
-    MCTSNode* parent;
-    std::map<int, std::unique_ptr<MCTSNode>> children; // Key is 'to_idx'
-    std::mutex node_mutex;
+    int visit_count = 0;
+    float value_sum = 0.0f;
+    std::map<int, std::unique_ptr<MCTSNode>> children;
 
-    bool is_expanded() const { return !children.empty(); }
-    float get_value(int player_index) const; 
+    MCTSNode(Move m, float p) : move(m), prior(p) {}
+
+    float get_value() const {
+        return visit_count == 0 ? 0.0f : value_sum / visit_count;
+    }
 };
 
 class MCTS {
 public:
-    MCTS(float c_puct = 1.41f);
+    explicit MCTS(float cpuct = 1.41f) : cpuct(cpuct) {}
     
-    // Main entry point from Python
-    void search(int iterations, Board& root_board, 
-                const std::function<std::pair<std::vector<float>, RewardVector>(const BoardArray&)>& predictor);
-
-    Move get_best_move(const Board& root_board);
+    // Core AlphaZero search
+    void search(int iterations, Board& board, Predictor predictor);
+    
+    // Selection logic
+    Move get_best_move();
+    
+    // Move selection with tree reuse
+    Move get_best_move_and_reuse();
+    
+    // Returns visit counts for training labels
+    std::map<int, int> get_visit_counts();
+    
+    // Clear the tree (for new games)
+    void clear_tree();
 
 private:
-    float c_puct;
-    
-    MCTSNode* select(MCTSNode* node, const Board& board);
-    void expand(MCTSNode* node, const Board& board, const std::vector<float>& policy_logits);
-    void backpropagate(MCTSNode* node, const RewardVector& values);
-    
-    // Virtual Loss helpers
-    void apply_virtual_loss(MCTSNode* node);
-    void remove_virtual_loss(MCTSNode* node);
+    float cpuct;
+    std::unique_ptr<MCTSNode> root;
+
+    MCTSNode* select_child(MCTSNode* node);
+    void expand_node(MCTSNode* node, Board& board, const std::vector<float>& policy);
 };
 
 #endif

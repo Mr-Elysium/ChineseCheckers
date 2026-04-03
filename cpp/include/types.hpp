@@ -5,7 +5,8 @@
 #include <vector>
 #include <stdint.h>
 
-// The board has 121 holes. 0 = empty, 1-6 = Player IDs.
+// The board has 121 positions (compact sequential indexing).
+// 0 = empty, 1-6 = Player IDs.
 using BoardArray = std::array<int8_t, 121>;
 
 // RewardVector[i] is the win probability for Player (i+1).
@@ -13,13 +14,19 @@ using BoardArray = std::array<int8_t, 121>;
 using RewardVector = std::vector<float>;
 
 struct Move {
-    int from;
-    int to;
+    int from_idx;
+    int to_idx;
 
     // Helpful for pybind11 and debugging
     bool operator==(const Move& other) const {
-        return from == other.from && to == other.to;
+        return from_idx == other.from_idx && to_idx == other.to_idx;
     }
+
+    // Add this explicit constructor
+    Move(int f, int t) : from_idx(f), to_idx(t) {}
+
+    // Also add a default constructor (good practice for MCTS)
+    Move() : from_idx(-1), to_idx(-1) {}
 };
 
 #endif
