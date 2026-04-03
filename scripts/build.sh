@@ -15,10 +15,12 @@ mkdir -p build
 cd build
 
 echo "--- Running CMake Configuration ---"
-cmake ..
+# uv run ensures the environment variables for your venv are active
+uv run cmake ..
 
 echo "--- Compiling with $THREADS threads ---"
-make -j$THREADS
+# We also use uv run here so the linker can find the venv libraries if needed
+uv run make -j$THREADS
 
 cd ..
 
