@@ -29,3 +29,7 @@ runs/
 .vscode/
 .idea/
 .DS_Store
+
+# --- Test Folders ---
+test_checkpoints/
+test_logs/

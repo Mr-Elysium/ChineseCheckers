@@ -7,12 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Optimization for Zen-architecture Ryzen
 # --- Optimization: Handle Mac vs. PC ---
 if(APPLE)
-    # macOS compilers (especially under Rosetta) can be picky about -march=native.
-    # -O3 and -ffast-math are safe and very fast on M-series chips.
+    # Force ARM64 architecture for Apple Silicon Macs
+    # This overrides Rosetta if your terminal is lying to CMake
+    set(CMAKE_OSX_ARCHITECTURES "arm64")
+    
     add_compile_options(-O3 -ffast-math)
-    message(STATUS "macOS detected: Using standard high optimization (-O3)")
+    message(STATUS "macOS detected: FORCING arm64 (Apple Silicon) build")
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    # For your Ryzen PC, -march=native is perfect.
+    # For your Ryzen PC later
     add_compile_options(-O3 -march=native -ffast-math)
     message(STATUS "Linux/Windows detected: Using native architecture optimization")
 else()
