@@ -60,7 +60,8 @@ def gpu_inference_server(task_queue, pipes, model_path, num_players, batch_size=
     model.eval()
     # Enable torch.compile for RTX 3080 (20-30% speedup)
     if torch.cuda.is_available():
-        model = torch.compile(model, mode='max-autotune')
+        # model = torch.compile(model, mode='max-autotune')
+        model = torch.compile(model)
         if verbose:
             print("GPU Server: Initialized with torch.compile optimization")
     elif verbose:
@@ -72,7 +73,7 @@ def gpu_inference_server(task_queue, pipes, model_path, num_players, batch_size=
         
         start_time = time.time()
         # Collect tasks until batch is full or 15ms passed (optimized for 18+ workers)
-        while len(batch_tensors) < batch_size and (time.time() - start_time < 0.015):
+        while len(batch_tensors) < batch_size and (time.time() - start_time < 0.100):
             try:
                 worker_id, state_array, current_player = task_queue.get(timeout=0.001)
                 batch_ids.append(worker_id)

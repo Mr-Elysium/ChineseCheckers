@@ -2,10 +2,16 @@
 import sys
 import os
 import argparse
+import multiprocessing as mp
+
+mp.set_start_method('spawn', force=True)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
 from trainer import Trainer
+import torch
+
+torch.set_num_threads(24)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train Chinese Checkers AlphaZero')
@@ -23,8 +29,8 @@ def parse_args():
     
     # Self-play settings
     parser.add_argument('--games-per-iteration', type=int, default=200, help='Self-play games per iteration')
-    parser.add_argument('--num-workers', type=int, default=18, help='Number of self-play workers')
-    parser.add_argument('--mcts-iterations', type=int, default=200, help='MCTS iterations per move')
+    parser.add_argument('--num-workers', type=int, default=16, help='Number of self-play workers')
+    parser.add_argument('--mcts-iterations', type=int, default=100, help='MCTS iterations per move')
     
     # Replay buffer
     parser.add_argument('--buffer-size', type=int, default=100000, help='Replay buffer size')
