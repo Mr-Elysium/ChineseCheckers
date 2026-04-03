@@ -1,1 +1,20 @@
 .DS_Store
+
+# Build artifacts
+build/
+bin/
+*.so
+*.dylib
+*.dll
+*.pyd
+
+# Python specifics
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+
+# Data and Models
+data/games/
+data/checkpoints/
+data/logs/
