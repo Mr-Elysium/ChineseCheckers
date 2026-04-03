@@ -127,7 +127,7 @@ class Trainer:
         gpu_process = mp.Process(
             target=gpu_inference_server,
             args=(task_queue, [p[1] for p in pipes], temp_model.name, 
-                  self.config['num_players'], 64, 
+                  self.config['num_players'], 192, 
                   self.config['num_res_blocks'], self.config['num_channels'], verbose)
         )
         gpu_process.start()
@@ -176,6 +176,10 @@ class Trainer:
     def _train_network(self):
         self.model.train()
         
+        # Enable automatic mixed precision for RTX 3080 (30-50% speedup)
+        use_amp = torch.cuda.is_available()
+        scaler = torch.cuda.amp.GradScaler() if use_amp else None
+        
         total_policy_loss = 0.0
         total_value_loss = 0.0
         total_loss = 0.0
@@ -197,37 +201,45 @@ class Trainer:
             target_policies = torch.from_numpy(policies).to(self.device)
             target_values = torch.from_numpy(rewards).to(self.device)
             
-            # Forward pass
-            pred_policies, pred_values = self.model(input_batch)
+            # Forward pass with automatic mixed precision
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                pred_policies, pred_values = self.model(input_batch)
+                
+                # Compute losses
+                # Policy loss: KL divergence between MCTS policy and network policy
+                log_probs = F.log_softmax(pred_policies, dim=1)
+                policy_loss = F.kl_div(
+                    log_probs,
+                    target_policies,
+                    reduction='batchmean'
+                )
+                
+                # Value loss: MSE for current player's reward
+                if self.config['num_players'] == 2:
+                    # For 2-player, use player's actual reward
+                    player_rewards = torch.zeros(len(players), 1).to(self.device)
+                    for i, player in enumerate(players):
+                        player_rewards[i] = target_values[i, player - 1]
+                    value_loss = F.mse_loss(pred_values, player_rewards)
+                else:
+                    # For 6-player, use full reward vector
+                    value_loss = F.mse_loss(pred_values, target_values)
+                
+                # Total loss
+                loss = policy_loss + value_loss
             
-            # Compute losses
-            # Policy loss: KL divergence between MCTS policy and network policy
-            log_probs = F.log_softmax(pred_policies, dim=1)
-            policy_loss = F.kl_div(
-                log_probs,
-                target_policies,
-                reduction='batchmean'
-            )
-            
-            # Value loss: MSE for current player's reward
-            if self.config['num_players'] == 2:
-                # For 2-player, use player's actual reward
-                player_rewards = torch.zeros(len(players), 1).to(self.device)
-                for i, player in enumerate(players):
-                    player_rewards[i] = target_values[i, player - 1]
-                value_loss = F.mse_loss(pred_values, player_rewards)
-            else:
-                # For 6-player, use full reward vector
-                value_loss = F.mse_loss(pred_values, target_values)
-            
-            # Total loss
-            loss = policy_loss + value_loss
-            
-            # Backward pass
+            # Backward pass with gradient scaling for mixed precision
             self.optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-            self.optimizer.step()
+            if use_amp:
+                scaler.scale(loss).backward()
+                scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                scaler.step(self.optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.optimizer.step()
             
             # Track stats
             total_policy_loss += policy_loss.item()

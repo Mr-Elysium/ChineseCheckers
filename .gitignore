@@ -32,4 +32,6 @@ runs/
 
 # --- Test Folders ---
 test_checkpoints/
+checkpoints/
 test_logs/
+logs/

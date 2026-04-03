@@ -45,7 +45,7 @@ def select_move_with_temperature(mcts, temperature=1.0):
         return mcts.get_best_move()
 
 # --- 1. The Inference Server (The Brain on the 3080) ---
-def gpu_inference_server(task_queue, pipes, model_path, num_players, batch_size=64, num_res_blocks=10, num_channels=128, verbose=False):
+def gpu_inference_server(task_queue, pipes, model_path, num_players, batch_size=192, num_res_blocks=10, num_channels=128, verbose=False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ChineseCheckersNet(
         num_players=num_players,
@@ -58,9 +58,12 @@ def gpu_inference_server(task_queue, pipes, model_path, num_players, batch_size=
         model.load_state_dict(torch.load(model_path, map_location=device))
     
     model.eval()
-    # Skip torch.compile for the first 5 minutes of testing to see if it works!
-    
-    if verbose:
+    # Enable torch.compile for RTX 3080 (20-30% speedup)
+    if torch.cuda.is_available():
+        model = torch.compile(model, mode='max-autotune')
+        if verbose:
+            print("GPU Server: Initialized with torch.compile optimization")
+    elif verbose:
         print("GPU Server: Initialized and waiting for tasks...")
 
     while True:
@@ -68,8 +71,8 @@ def gpu_inference_server(task_queue, pipes, model_path, num_players, batch_size=
         batch_tensors = []
         
         start_time = time.time()
-        # Collect tasks until batch is full or 10ms passed
-        while len(batch_tensors) < batch_size and (time.time() - start_time < 0.01):
+        # Collect tasks until batch is full or 15ms passed (optimized for 18+ workers)
+        while len(batch_tensors) < batch_size and (time.time() - start_time < 0.015):
             try:
                 worker_id, state_array, current_player = task_queue.get(timeout=0.001)
                 batch_ids.append(worker_id)

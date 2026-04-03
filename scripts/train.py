@@ -18,19 +18,19 @@ def parse_args():
     # Training hyperparameters
     parser.add_argument('--learning-rate', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--weight-decay', type=float, default=1e-4, help='Weight decay')
-    parser.add_argument('--batch-size', type=int, default=256, help='Batch size')
+    parser.add_argument('--batch-size', type=int, default=512, help='Batch size')
     parser.add_argument('--training-steps', type=int, default=100, help='Training steps per iteration')
     
     # Self-play settings
-    parser.add_argument('--games-per-iteration', type=int, default=100, help='Self-play games per iteration')
-    parser.add_argument('--num-workers', type=int, default=8, help='Number of self-play workers')
+    parser.add_argument('--games-per-iteration', type=int, default=200, help='Self-play games per iteration')
+    parser.add_argument('--num-workers', type=int, default=18, help='Number of self-play workers')
     parser.add_argument('--mcts-iterations', type=int, default=200, help='MCTS iterations per move')
     
     # Replay buffer
-    parser.add_argument('--buffer-size', type=int, default=50000, help='Replay buffer size')
+    parser.add_argument('--buffer-size', type=int, default=100000, help='Replay buffer size')
     
     # Evaluation
-    parser.add_argument('--eval-games', type=int, default=20, help='Evaluation games')
+    parser.add_argument('--eval-games', type=int, default=40, help='Evaluation games')
     parser.add_argument('--eval-frequency', type=int, default=5, help='Evaluate every N iterations')
     parser.add_argument('--win-rate-threshold', type=float, default=0.55, help='Win rate to replace best model')
     
